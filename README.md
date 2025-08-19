@@ -8,6 +8,7 @@ Specifically we will examine the following representations:
     * Traditional piano-roll notation
     * Helix shaped representations based on the Spiral Note Array model
     * 3D Torus-shaped representations based on Tonnetz, along with multiple structural variations.
+    * Umbilic Torus representations
 - For the spectrum:
     * Traditional 2D spectrogram representations (Log-Mel, CQT)
     * Harmonically enchanced 2D representations (Harmonic CQT)
