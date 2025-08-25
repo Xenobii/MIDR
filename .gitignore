@@ -1,2 +1,4 @@
 /test.py
 /MIDR/test_files
+/MIDR/corpus/__pycache__
+/MIDR/representations/__pycache__

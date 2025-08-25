@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 
 
 
-class MidiNote:
-    def __init__(self, start, end, pitch, velocity):
+class StdNote:
+    def __init__(self, onset, offset, pitch, velocity):
         if velocity < 0 or velocity > 127:
             raise ValueError(f"Velocity must be between 0 and 127")
         
-        self.start    = start
-        self.end      = end
+        self.onset    = onset
+        self.offset   = offset
         self.pitch    = pitch
         self.velocity = velocity
 
@@ -22,33 +22,42 @@ class MidiNote:
     
     def to_dict(self):
         return {
-            "start"    : float(self.start),
-            "end"      : float(self.end),
+            "onset"    : float(self.onset),
+            "offset"   : float(self.offset),
             "pitch"    : self.pitch,
             "velocity" : self.velocity
         }
     
     @classmethod
+    def from_midi_note(cls, midi_note):
+        onset    = midi_note["onset"]
+        offset   = midi_note["offset"]
+        pitch    = midi_note["pitch"]
+        velocity = midi_note["velocity"]
+
+        return cls(onset, offset, pitch, velocity)
+    
+    @classmethod
     def from_other_note_rep(cls, note):
-        assert(isinstance(note, HelixNote) or 
+        assert(isinstance(note, SnaNote) or 
                isinstance(note, TorusNote))
 
-        start    = note.start
-        end      = note.end
+        onset    = note.onset
+        offset   = note.offset
         pitch    = note.pitch
         velocity = note.velocity
 
-        return cls(start, end, pitch, velocity)
+        return cls(onset, offset, pitch, velocity)
 
 
 
-class HelixNote:
-    def __init__(self, start, end, pitch, velocity):
+class SnaNote:
+    def __init__(self, onset, offset, pitch, velocity):
         if velocity < 0 or velocity > 127:
             raise ValueError(f"Velocity must be between 0 and 127")
         
-        self.start    = start
-        self.end      = end
+        self.onset    = onset
+        self.offset   = offset
         self.pitch    = pitch
         self.velocity = velocity
 
@@ -60,22 +69,30 @@ class HelixNote:
     
     def __repr__(self):
         return str(f"Helix Note:({self.__dict__})")
+    
+    def to_dict(self):
+        return {
+            "onset"    : float(self.onset),
+            "offset"   : float(self.offset),
+            "pitch"    : self.pitch,
+            "velocity" : self.velocity
+        }
 
     def visualize(self):
         return 0
     
     def to_midi_note(self):
-        return MidiNote(self.start,
-                        self.end,
+        return StdNote(self.onset,
+                        self.offset,
                         self.pitch,
                         self.velocity)
 
     @classmethod
     def from_midi_note(cls, midi_note):
-        assert(isinstance(midi_note, MidiNote))
+        # assert(isinstance(midi_note, MidiNote))
 
-        start    = midi_note.start
-        end      = midi_note.end
+        start    = midi_note.onset
+        end      = midi_note.offset
         pitch    = midi_note.pitch
         velocity = midi_note.velocity
 
@@ -84,12 +101,12 @@ class HelixNote:
     
 
 class TorusNote:
-    def __init__(self, start, end, pitch, velocity):
+    def __init__(self, onset, offset, pitch, velocity):
         if velocity < 0 or velocity > 127:
             raise ValueError(f"Velocity must be between 0 and 127")
         
-        self.start    = start
-        self.end      = end
+        self.onset    = onset
+        self.offset   = offset
         self.pitch    = pitch
         self.velocity = velocity
 
@@ -105,6 +122,14 @@ class TorusNote:
 
     def __repr__(self):
         return str(f"Torus Note:({self.__dict__})")
+    
+    def to_dict(self):
+        return {
+            "onset"    : float(self.onset),
+            "offset"   : float(self.offset),
+            "pitch"    : self.pitch,
+            "velocity" : self.velocity
+        }
 
     def visualize(self):
         R = 1
@@ -148,17 +173,15 @@ class TorusNote:
         plt.show()
 
     def to_midi_note(self):
-        return MidiNote(self.start,
-                        self.end,
+        return StdNote(self.onset,
+                        self.offset,
                         self.pitch,
                         self.velocity)
     
     @classmethod
     def from_midi_note(cls, midi_note):
-        assert(isinstance(midi_note, MidiNote))
-
-        start    = midi_note.start
-        end      = midi_note.end
+        start    = midi_note.onset
+        end      = midi_note.offset
         pitch    = midi_note.pitch
         velocity = midi_note.velocity
 
