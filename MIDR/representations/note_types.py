@@ -6,24 +6,55 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-
-class StdNote:
+class MidiNote:
     def __init__(self, onset, offset, pitch, velocity, delta=0):
         if velocity < 0 or velocity > 127:
-            raise ValueError(f"Velocity must be between 0 and 127")
+            raise ValueError(f"Invalid veolcity: {velocity}, velocity must be between 0 and 127.")
         
+        if pitch not in set(range(0, 128)) | {-64, -66, -67}:
+            raise ValueError(f"Invalid pitch: {pitch}, pitch must be from 0 to 127 or -64, -66, -67.")
+
         self.onset    = onset
         self.offset   = offset
         self.pitch    = pitch + delta
         self.velocity = velocity
 
-        self.x = 0
-        self.y = 0
-        self.z = self.pitch / 12
+    def __repr__(self):
+        return str(f"Midi Note:({self.to_dict()})")
+    
+    def to_dict(self):
+        return {
+            "onset"     : float(self.onset),
+            "offset"    : float(self.offset),
+            "pitch"     : int(self.pitch),
+            "velocity"  : int(self.velocity)    
+        }
+
+
+class MidiTransforms():
+    def __init__(self, note, repr_type="standard", delta=0):
+        if not isinstance(note, MidiNote) and note["onset"] is None:
+            raise TypeError(f"Midi notes must be of type MidiNote or a similarly structured object.")
+        
+        self.onset      = note.onset
+        self.offset     = note.offset
+        self.pitch      = note.pitch + delta
+        self.velocity   = note.velocity
+        self.repr_type  = repr_type
+        
+        if self.repr_type == "standard":
+            self.get_std_coords()
+        elif self.repr_type == "sna":
+            self.get_sna_coords()
+        elif self.repr_type == "torus":
+            self.get_torus_coords()
+        else:
+            raise ValueError(f"Invalid repr type: {self.repr_type}")
+
 
     def __repr__(self):
-        return str(f"Midi Note:({self.__dict__})")
-    
+        return str(f"{self.repr_type} note: ({self.to_dict()})")
+
     def to_dict(self):
         return {
             "onset"     : float(self.onset),
@@ -35,49 +66,13 @@ class StdNote:
             "z"         : float(self.z)      
         }
     
-    @classmethod
-    def from_midi_note(cls, midi_note, delta):
-        onset    = midi_note["onset"]
-        offset   = midi_note["offset"]
-        pitch    = midi_note["pitch"]
-        velocity = midi_note["velocity"]
 
-        return cls(onset, offset, pitch, velocity, delta)
-    
-    @classmethod
-    def from_sna_note(cls, sna_note, delta=0):
-        A = np.sqrt(2.0 / 15.0) * np.pi / 2.0
-        z = sna_note["z"]
-        onset = sna_note["onset"]
-        offset = sna_note["offset"]
-        velocity = sna_note["velocity"]
+    def get_std_coords(self):
+        self.x = 0
+        self.y = 0
+        self.z = self.pitch / 12
 
-        pitch = int((z / A) + 12 * 2)
-
-        return cls(onset, offset, pitch, velocity, delta)
-    
-    @classmethod
-    def from_torus_note(cls, torus_note, delta=0):
-        # temp
-        pitch = 0
-        onset = torus_note["onset"]
-        offset = torus_note["offset"]
-        velocity = torus_note["velocity"]
-
-        return cls(onset, offset, pitch, velocity, delta)
-    
-
-class SnaNote:
-    def __init__(self, onset, offset, pitch, velocity, delta=0):
-        if velocity < 0 or velocity > 127:
-            raise ValueError(f"Velocity must be between 0 and 127")
-        
-        self.onset    = onset
-        self.offset   = offset
-        self.pitch    = pitch + delta
-        self.velocity = velocity
-
-        # Helix logic
+    def get_sna_coords(self):
         A = np.sqrt(2.0 / 15.0) * np.pi / 2.0
         R = 1.0
 
@@ -89,23 +84,32 @@ class SnaNote:
         
         self.x = R * np.cos(theta)
         self.y = R * np.sin(theta)
-        self.z = A * (self.pitch - 24) 
+        self.z = A * (self.pitch - 24)
+
+    def get_torus_coords(self):
+        R = 1
+        r = 0.5
+
+        # Torus logic
+        theta = np.pi / 2
+        phi   = np.pi
+        self.x = (R + r * np.cos(phi)) * np.cos(theta)
+        self.y = (R + r * np.cos(phi)) * np.sin(theta)
+        self.z = r * np.sin(phi)
+
+
+    def visualize(self):
+        if self.repr_type == "standard":
+            self.visualize_std()
+        elif self.repr_type == "sna":
+            self.visualize_sna()
+        elif self.repr_type == "torus":
+            self.visualize_torus()
+
+    def visualize_std(self):
+        return 0
     
-    def __repr__(self):
-        return str(f"Helix Note:({self.__dict__})")
-    
-    def to_dict(self):
-        return {
-            "onset"     : float(self.onset),
-            "offset"    : float(self.offset),
-            "pitch"     : int(self.pitch),
-            "velocity"  : int(self.velocity),
-            "x"         : float(self.x),
-            "y"         : float(self.y),
-            "z"         : float(self.z)      
-        }
-    
-    def __generate_helix__(self, octaves=8, r=1.0, h=np.sqrt(2.0 / 15.0) * np.pi / 2.0):
+    def __generate_helix(self, octaves=8, r=1.0, h=np.sqrt(2.0 / 15.0) * np.pi / 2.0):
         """
         Returns coordinates for a helix array for visualization
         """
@@ -121,13 +125,13 @@ class SnaNote:
             y_vals.append(y)
             z_vals.append(z)
         return np.array(x_vals), np.array(y_vals), np.array(z_vals)
-
-    def visualize(self):
+    
+    def visualize_sna(self):
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
 
         # Helix
-        x_helix, y_helix, z_helix = self.__generate_helix__(octaves=8)
+        x_helix, y_helix, z_helix = self.__generate_helix(octaves=8)
         ax.plot(x_helix, y_helix, z_helix, color='gray', alpha=0.5, linewidth=1, label="SNA")
 
         # Note
@@ -137,53 +141,9 @@ class SnaNote:
         ax.legend()
     
         plt.tight_layout()
-        plt.show()
+        plt.show()  
 
-    @classmethod
-    def from_midi_note(cls, midi_note, delta):
-        onset    = midi_note["onset"]
-        offset   = midi_note["offset"]
-        pitch    = midi_note["pitch"]
-        velocity = midi_note["velocity"]
-
-        return cls(onset, offset, pitch, velocity, delta)
-    
-
-class TorusNote:
-    def __init__(self, onset, offset, pitch, velocity, delta):
-        if velocity < 0 or velocity > 127:
-            raise ValueError(f"Velocity must be between 0 and 127")
-        
-        self.onset    = onset
-        self.offset   = offset
-        self.pitch    = pitch + delta
-        self.velocity = velocity
-
-        R = 1
-        r = 0.5
-
-        # Torus logic
-        theta = np.pi / 2
-        phi   = np.pi
-        self.x = (R + r * np.cos(phi)) * np.cos(theta)
-        self.y = (R + r * np.cos(phi)) * np.sin(theta)
-        self.z = r * np.sin(phi)
-
-    def __repr__(self):
-        return str(f"Torus Note:({self.__dict__})")
-    
-    def to_dict(self):
-        return {
-            "onset"     : float(self.onset),
-            "offset"    : float(self.offset),
-            "pitch"     : int(self.pitch),
-            "velocity"  : int(self.velocity),
-            "x"         : float(self.x),
-            "y"         : float(self.y),
-            "z"         : float(self.z)      
-        }
-
-    def visualize(self):
+    def visualize_torus(self):
         R = 1
         r = 0.5
 
@@ -224,20 +184,26 @@ class TorusNote:
         plt.tight_layout()
         plt.show()
 
-    def to_midi_note(self):
-        return StdNote(self.onset,
-                        self.offset,
-                        self.pitch,
-                        self.velocity)
-    
-    @classmethod
-    def from_midi_note(cls, midi_note):
-        start    = midi_note.onset
-        end      = midi_note.offset
-        pitch    = midi_note.pitch
-        velocity = midi_note.velocity
 
-        return cls(start, end, pitch, velocity)
+    def to_midi_note(self):
+        if self.repr_type == "standard":
+            midi_note = self.std_to_midi_note()
+        elif self.repr_type == "sna":
+            midi_note = self.sna_to_midi_note()
+        elif self.repr_type == "torus":
+            midi_note = self.torus_to_midi_note()
+
+    def std_to_midi_note(self):
+        return MidiNote(self.onset, self.offset, self.pitch, self.velocity) # Temp
+    
+    def sna_to_midi_note(self):
+        A = np.sqrt(2.0 / 15.0) * np.pi / 2.0
+        pitch = int((self.z / A) + 12 * 2)
+
+        return MidiNote(self.onset, self.offset, pitch, self.velocity)
+    
+    def torus_to_midi_note(self):
+        return MidiNote(self.onset, self.offset, self.pitch, self.velocity) # Temp
 
 
 
