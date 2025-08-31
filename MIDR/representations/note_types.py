@@ -70,7 +70,7 @@ class MidiTransforms():
     def get_std_coords(self):
         self.x = 0
         self.y = 0
-        self.z = self.pitch / 12
+        self.z = self.pitch
 
     def get_sna_coords(self):
         A = np.sqrt(2.0 / 15.0) * np.pi / 2.0
