@@ -13,4 +13,4 @@ The general pipelines I'll try for now is the following:
 
 ![alt text](./res/MIDREP.drawio.png)
 
-*Repo is a work in process and doesn't really rork yet*
+*Repo is a work in process and doesn't really work yet*
