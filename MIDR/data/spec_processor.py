@@ -1,5 +1,5 @@
 """
-    Spec preprocessor
+    Spec Processor
 
     Preprocessing algorithm is based on this: https://github.com/sony/hFT-Transformer
 """
@@ -40,6 +40,7 @@ class SpecProcessor():
                 "num_frame"     : 128
             }
         }
+    
     
     def wav2spec(self, wav_path):
         """
@@ -140,92 +141,6 @@ class SpecProcessor():
             frames.append(frame)
         
         return frames
-
-
-
-def get_centroid(notes):
-    if not notes:
-        return 0
-    
-    notes   = np.array(notes)
-    coords  = notes[:, :3]
-    weights = notes[:, 3]
-
-    if (all(weights) == 0):
-        return 0
-    
-    centroid    = np.average(coords, axis=0, weights=weights)
-    weight      = np.average(weights, axis=0)
-    return np.hstack([centroid, weight])
-
-
-def get_diameter(notes):
-    if not notes:
-        return -1
-    
-    notes = np.array(notes)
-    coords = notes[:, :3]
-
-    diffs = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-    dists = np.linalg.norm(diffs, axis=-1)
-
-    diameter = np.max(dists)
-    return diameter
-
-
-def plot_spec_and_label(spec, label, sr=16000, hop_length=256):
-    """
-    Plot spectrogram and label aligned in time on the x-axis
-    as two separate subplots.
-    """
-    if not isinstance(label, torch.Tensor):
-        label = torch.from_numpy(label)
-
-    # Reduce label to (frames, notes) shape if needed
-    if label.ndim == 4:  
-        label = label[:, 0, 0, :].T
-
-    # Get dimensions
-    n_mels, n_frames = spec.shape
-    _, label_frames = label.shape
-    assert n_frames == label_frames, f"Mismatch: spec has {n_frames} frames, label has {label_frames}"
-
-    # Time axis (in seconds) for alignment
-    times = np.arange(n_frames) * hop_length / sr
-    duration = times[-1]
-
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(12, 6), sharex=True,
-        gridspec_kw={'height_ratios': [3, 1]}
-    )
-
-    # --- Spectrogram ---
-    img = librosa.display.specshow(
-        spec.numpy(),
-        sr=sr,
-        hop_length=hop_length,
-        x_axis="time",
-        y_axis="mel",
-        cmap="magma",
-        ax=ax1
-    )
-    ax1.set_title("Spectrogram")
-    # fig.colorbar(img, ax=ax1, format="%+2.0f dB")
-
-    # --- Label ---
-    ax2.imshow(
-        label.numpy(),
-        aspect="auto",
-        origin="lower",
-        cmap="Greys",
-        extent=[0, duration, 0, label.shape[1]]  # stretch to same time axis
-    )
-    ax2.set_title("Label")
-    ax2.set_ylabel("Notes")
-    ax2.set_xlabel("Time (s)")
-
-    plt.tight_layout()
-    plt.show()
 
 
 

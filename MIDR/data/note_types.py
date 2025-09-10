@@ -192,6 +192,9 @@ class MidiTransforms():
             midi_note = self.sna_to_midi_note()
         elif self.repr_type == "torus":
             midi_note = self.torus_to_midi_note()
+        else:
+            raise ValueError(f"Invalid represenation type: {self.repr_type}")
+        return midi_note
 
     def std_to_midi_note(self):
         return MidiNote(self.onset, self.offset, self.pitch, self.velocity) # Temp
@@ -204,15 +207,28 @@ class MidiTransforms():
     
     def torus_to_midi_note(self):
         return MidiNote(self.onset, self.offset, self.pitch, self.velocity) # Temp
+    
+    @classmethod
+    def from_coords(cls, onset, offset, x, y, z, velocity, repr_type="standard"):
+        if offset < onset:
+            max_dt = 0.0001
+            if onset-offset > max_dt:
+                raise ValueError(f"Offset ({offset}) of the note comes before the Onset ({onset})")
+        
+        if repr_type == "standard":
+            pitch = z
+
+        elif repr_type == "sna":
+            pitch = z
+
+        else:
+            raise ValueError(f"Invalid representation type")
+
+        note = MidiNote(onset, offset, pitch, velocity)
+        return cls(note, repr_type)
 
 
 
 if __name__ == "__main__":
     sna_note = TorusNote(0, 1, 62, 64, 0)
     sna_note.visualize()
-    # sna_note = sna_note.to_dict()
-
-    # print(sna_note)
-
-    # midi_note = StdNote.from_sna_note(sna_note)
-    # print(midi_note)

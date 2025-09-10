@@ -1,5 +1,5 @@
 """
-    Model file
+    Midi Processor
 
     Preprocessing algorithm is based on this: https://github.com/sony/hFT-Transformer
 """
@@ -22,7 +22,6 @@ from MIDR.data.spec_types import SpecTransforms
 from MIDR.data.note_types import MidiTransforms, MidiNote
 
 
-
 class MidiProcessor():
     def __init__(self):
         # Add config here for now
@@ -42,7 +41,9 @@ class MidiProcessor():
             }
         }
     
-    def midi2events(self, midi_path, supportedCC = [64, 66, 67], extendSustainPedal=True):
+    # PREPROCESSING
+    
+    def midi2evnt(self, midi_path, supportedCC = [64, 66, 67], extendSustainPedal=False):
         """
             Input   : Midi file
             Output  : Event list (list of note events)
@@ -92,7 +93,7 @@ class MidiProcessor():
 
         return events
     
-    def events2midr(self, events, repr_type="standard", delta=0):
+    def evnt2midr(self, events, repr_type="standard", delta=0):
         """
             Input   : Note event list (list of note events)
             Output  : MIDR list (list of midr events)
@@ -114,13 +115,13 @@ class MidiProcessor():
         
         return midrep
     
-    def midr2frame(self, midr, use_offset_duration_tolerance=True):
+    def midr2seq(self, midr, use_offset_duration_tolerance=True):
         """
             Input   : MIDR list (list of midr events)
             Ouptut  : Note Arrays (4 x (Array x L))
 
             L: Total time bins
-            Array: Array of notes [x, y, z, velocity]
+            Array: Array of notes at a given fram [[x, y, z, velocity],[...],...]
         """
         # (1) Calculate settings
         sr          = self.config["feature"]["sr"]          # 16000
@@ -141,10 +142,10 @@ class MidiProcessor():
         nframe = int(max_offset * frames_per_sec + 0.5) + 1
 
         # (3) Create label matrices
-        mpe_array       = [[] for _ in range(nframe)]
-        onset_array     = [[] for _ in range(nframe)]
-        offset_array    = [[] for _ in range(nframe)]
-        velocity_array  = [[] for _ in range(nframe)]
+        mpe_seq       = [[] for _ in range(nframe)]
+        onset_seq     = [[] for _ in range(nframe)]
+        offset_seq    = [[] for _ in range(nframe)]
+        velocity_seq  = [[] for _ in range(nframe)]
 
         # (4) Fill label matrices 
         for note in midr_notes:
@@ -182,10 +183,10 @@ class MidiProcessor():
                 
                 if onset_frame + j < nframe:
                     # if onset_label[onset_frame+j, 3] < onset_val:
-                    onset_array[onset_frame+j].append([x, y, z, onset_val])
+                    onset_seq[onset_frame+j].append([x, y, z, onset_val])
 
                     if onset_val >= 0.5:
-                        velocity_array[onset_frame+j].append([x, y, z, velocity])
+                        velocity_seq[onset_frame+j].append([x, y, z, velocity])
 
             # (4.4.2) Look behind
             for j in range(1, onset_sharpness+1):
@@ -195,13 +196,13 @@ class MidiProcessor():
                 
                 if onset_frame - j >= 0:
                     # if onset_label[onset_frame-j, 3] < onset_val:
-                    onset_array[onset_frame-j].append([x, y, z, onset_val])
+                    onset_seq[onset_frame-j].append([x, y, z, onset_val])
                     if onset_val >= 0.5:
-                        velocity_array[onset_frame-j].append([x, y, z, velocity])
+                        velocity_seq[onset_frame-j].append([x, y, z, velocity])
 
             # (4.6) Fill out mpe
             for j in range(onset_frame, offset_frame + 1):
-                mpe_array[j].append([x, y, z, velocity])
+                mpe_seq[j].append([x, y, z, velocity])
 
             # (4.7) Fill out offset
             #       Ignore if a note at the same position has an onset 
@@ -221,7 +222,7 @@ class MidiProcessor():
                     
                     if offset_frame + j < nframe:
                         # if offset_label[offset_frame+j, 3] < offset_val:
-                        offset_array[offset_frame+j].append([x, y, z, offset_val])
+                        offset_seq[offset_frame+j].append([x, y, z, offset_val])
 
                 for j in range(1, offset_sharpness+1):
                     offset_ms_q      = (offset_frame - j) * hop_ms
@@ -230,53 +231,54 @@ class MidiProcessor():
                     
                     if offset_frame - j >= 0:
                         # if offset_label[offset_frame-j, 3] < offset_val:
-                        offset_array[offset_frame-j].append([x, y, z, offset_val])
+                        offset_seq[offset_frame-j].append([x, y, z, offset_val])
 
         # (5) Return arrays
-        return mpe_array, onset_array, offset_array, velocity_array
-    
+        return mpe_seq, onset_seq, offset_seq, velocity_seq
 
-    def frame2notes(self, array):
+    def seq2note(self, seq, int_velocity=False):
         """
             Input   : Note Array(L, Array([x, y, z, vel]))
             Output  : Note label matrix (L, (X, Y, Z))
         """
-        nframe  = len(array)
+        nframe  = len(seq)
         label   = np.zeros((nframe, 1, 1, 88), dtype=np.int8) # Temp logic
 
         for i in range(0, nframe):
-            for note in array[i]:
+            for note in seq[i]:
                 x = int(note[0] + 0.5)
                 y = int(note[1] + 0.5)
                 z = int(note[2] + 0.5)
                 velocity = note[3]
+                if not int_velocity:
+                    velocity = int(velocity * 127)
                 label[i, x, y, z] = velocity
-
+                
         return label
     
-
-    def frame2center(self, array):
+    def seq2centr(self, seq):
         """
             Input   : Note Array(L, Array([x, y, z, vel]))
             Output  : Cloud center matrix (L, [x, y, z, vel, diam])
         """
-        nframe = len(array)
+        nframe = len(seq)
         center = np.zeros((nframe, 5), dtype=np.float32)
 
         for i in range(0, nframe):
-            center[i, :4]    = get_centroid(array[i])
-            center[i, 4]     = get_diameter(array[i])
+            center[i, :4]    = get_centroid(seq[i])
+            center[i, 4]     = get_diameter(seq[i])
         return center
 
-    def label2chunks(self, label):
+    def lbl2chunks(self, label):
         """
-            Input   : Label matrix (L, 5)
-            Output  : Array of padded chunks (K x ((N + 2M), [x, y, z, vel, cm]))
+            Input   : Label matrix (L, ?)
+            Output  : Array of padded chunks (K x ((N + 2M), ?))
 
-            L: Total time frames
-            K: Number of chunks
-            N: Number of frames per chunk
-            M: Pad margin
+            L:  Total time frames
+            K:  Number of chunks
+            N:  Number of frames per chunk
+            M:  Pad margin
+            ?:  Input can be [x, y, z, vel, diam] or [x, y, z, vel]
         """
         # (1) Pad end to allow smooth splitting into chunks
         num_frame_label = label.shape[0]
@@ -303,10 +305,287 @@ class MidiProcessor():
 
         return chunks
     
-    
-    def plot_label(self, label):
+    def midi_to_labels(self, midi_path):
         """
-            Helper function for plotting a label after collapsing it to 2D (P x N)
+            Input   : Midi file path
+            Output  : Note label matrices 4 x (L, X, Y, Z)
+        """
+        events  = self.midi2evnt(midi_path)
+        midr    = self.evnt2midr(events)
+
+        mpe_seq, onset_seq, offset_seq, velocity_seq = self.midr2seq(midr)
+
+        onset_label     = self.seq2note(onset_seq)
+        offset_label    = self.seq2note(offset_seq)
+        mpe_label       = self.seq2note(mpe_seq, int_velocity=True)
+        velocity_label  = self.seq2note(velocity_seq, int_velocity=True)
+
+        return onset_label, offset_label, mpe_label, velocity_label
+    
+    def midi_to_centr(self, midi_path):
+        """
+            Input   : Midi file path
+            Output  : Note center matrices 4 x (L, [x, y, z, vel, diam])
+        """
+        events  = self.midi2evnt(midi_path)
+        midr    = self.evnt2midr(events)
+
+        mpe_seq, onset_seq, offset_seq, velocity_seq = self.midr2seq(midr)
+
+        onset_center    = self.seq2centr(onset_seq)
+        offset_center   = self.seq2centr(offset_seq)
+        mpe_center      = self.seq2centr(mpe_seq)
+        velocity_center = self.seq2centr(velocity_seq)
+
+        return onset_center, offset_center, mpe_center, velocity_center
+
+    # POSTPROCESSING
+
+    def label2midr(self,
+                  onset_label, offset_label, mpe_label, velocity_label,
+                  onset_thresh=0.5, offset_thresh=0.5, mpe_thresh=0.5,
+                  mode_velocity="ignore_zero", mode_offset="shorter"):
+        """ 
+            Input   : Note label matrices 4 x (L, X, Y, Z)
+            Output  : MIDR list (list of midr events)
+        """
+        # (1) Calculate settings
+        sr          = self.config["feature"]["sr"]
+        hop_sample  = self.config["feature"]["hop_sample"]
+        hop_sec     = float(hop_sample / sr)
+
+        L, X, Y, Z = onset_label.shape
+
+        repr_type = "standard" # Temp
+
+        midr_notes = []
+
+        # THIS IS PRETTY SCUFFED AND UNOPTIMIZED, MAYBE REWORK LATER
+        # (2) Iterate through every coordinate and check for local maxima
+        for z in range(Z):
+            # Move to next iteration if no element of an axis is above threshold
+            # through the whole piece
+            if not (onset_label[:, :, :, z] > onset_thresh).any():
+                continue
+
+            for y in range(Y):
+                if not (onset_label[:, :, y, z] > onset_thresh).any():
+                    continue
+
+                for x in range(X):
+                    if not (onset_label[:, x, y, z] > onset_thresh).any():
+                        continue
+
+                    # (2.1) Onset detection
+                    onset_seq   = []
+                    for i in range(L):
+                        if onset_label[i, x, y, z] >= onset_thresh:
+                            # (2.1.1) Check if i is local maxima or not
+                            left_flag=True
+                            for ii in range(i-1, -1, -1):
+                                if onset_label[i, x, y, z] > onset_label[ii, x, y, z]:
+                                    left_flag = True
+                                    break
+                                elif onset_label[i, x, y, z] < onset_label[ii, x, y, z]:
+                                    left_flag = False
+                                    break
+                            right_flag = True
+                            for ii in range(i+1, L):
+                                if onset_label[i, x, y, z] > onset_label[ii, x, y, z]:
+                                    right_flag = True
+                                    break
+                                elif onset_label[i, x, y, z] < onset_label[ii, x, y, z]:
+                                    right_flag = False
+                                    break
+
+                            # (2.1.2) If i is local maximum, save its onset time
+                            if left_flag and right_flag:
+                                if i == 0 or i == L-1:
+                                    onset_time = i * hop_sec
+                                else:
+                                    onset_curr  = onset_label[i, x, y, z]
+                                    onset_prev  = onset_label[i-1, x, y, z]
+                                    onset_next  = onset_label[i+1, x, y, z]
+
+                                # (2.1.3) Approximate the onset time based on the surrounding values
+                                    if onset_prev == onset_next:
+                                        onset_time = i * hop_sec    
+                                    elif onset_prev > onset_next:
+                                        onset_time = i * hop_sec - (hop_sec * 0.5 * (onset_prev - onset_next) / (onset_curr - onset_next))
+                                    else:
+                                        onset_time = i * hop_sec + (hop_sec * 0.5 * (onset_next - onset_prev) / (onset_curr - onset_prev))
+                                
+                                onset_seq.append({'loc': i,
+                                                  'onset_time': onset_time})
+                    # (2.2) Offset detection
+                    offset_seq  = []
+                    for i in range(L):
+                        if offset_label[i, x, y, z] >= offset_thresh:
+                            # (2.2.1) Check if i is local maxima or not
+                            left_flag=True
+                            for ii in range(i-1, -1, -1):
+                                if offset_label[i, x, y, z] > offset_label[ii, x, y, z]:
+                                    left_flag = True
+                                    break
+                                elif offset_label[i, x, y, z] < offset_label[ii, x, y, z]:
+                                    left_flag = False
+                                    break
+                            right_flag = True
+                            for ii in range(i+1, L):
+                                if offset_label[i, x, y, z] > offset_label[ii, x, y, z]:
+                                    right_flag = True
+                                    break
+                                elif offset_label[i, x, y, z] < offset_label[ii, x, y, z]:
+                                    right_flag = False
+                                    break
+
+                            # (2.2.2) If i is local maximum, save its onset time
+                            if left_flag and right_flag:
+                                if i == 0 or i == L-1:
+                                    offset_time = i * hop_sec
+                                else:
+                                    offset_curr  = offset_label[i, x, y, z]
+                                    offset_prev  = offset_label[i-1, x, y, z]
+                                    offset_next  = offset_label[i+1, x, y, z]
+
+                                # (2.2.3) Approximate the onset time based on the surrounding values
+                                    if offset_prev == offset_next:
+                                        offset_time = i * hop_sec    
+                                    elif offset_prev > offset_next:
+                                        offset_time = i * hop_sec - (hop_sec * 0.5 * (offset_prev - offset_next) / (offset_curr - offset_next))
+                                    else:
+                                        offset_time = i * hop_sec + (hop_sec * 0.5 * (offset_next - offset_prev) / (offset_curr - offset_prev))
+                                
+                                offset_seq.append({'loc': i,
+                                                   'offset_time': offset_time})
+
+                    time_next   = 0.0
+                    time_offset = 0.0
+                    time_mpe    = 0.0
+                    
+                    # (3) Return a note for each onset
+                    for onset_idx in range(len(onset_seq)):
+                        # (3.1) Define onset times
+                        loc_onset   = onset_seq[onset_idx]["loc"]
+                        time_onset  = onset_seq[onset_idx]["onset_time"]
+
+                        if onset_idx + 1 < len(onset_seq):
+                            loc_next    = onset_seq[onset_idx+1]["loc"]
+                            time_next   = onset_seq[onset_idx+1]["onset_time"]
+                        else:
+                            loc_next    = len(mpe_label)
+                            time_next  = (loc_next-1) * hop_sec
+
+                        # (3.2) Define offset times from offset_seq
+                        loc_offset  = loc_onset+1
+                        flag_offset = False
+
+                        for offset_idx in range(len(offset_seq)):
+                            if loc_onset < offset_seq[offset_idx]["loc"]:
+                                loc_offset  = offset_seq[offset_idx]["loc"]
+                                time_offset = offset_seq[offset_idx]["offset_time"]
+                                flag_offset = True
+                                break
+                        if loc_offset > loc_next:
+                            loc_offset  = loc_next
+                            time_offset = time_next
+
+                        # (3.3) Define offset times from mpe (1 frame longer)
+                        loc_mpe     = loc_onset+1
+                        flag_mpe    = False
+
+                        for ii_mpe in range(loc_onset+1, loc_next):
+                            if mpe_label[ii_mpe, x, y, z] < mpe_thresh:
+                                loc_mpe     = ii_mpe
+                                flag_mpe    = True
+                                time_mpe    = loc_mpe * hop_sec
+                                break
+                        
+                        velocity = int(velocity_label[loc_onset, x, y, z])
+
+                        # (3.4) Get the appropriate offset time
+                        if (flag_offset is False) and (flag_mpe is False):
+                            offset = float(time_next)
+                        elif (flag_offset is True) and (flag_mpe is False):
+                            offset = float(time_offset)
+                        elif (flag_offset is False) and (flag_mpe is True):
+                            offset = float(time_mpe)
+                        else:
+                            if mode_offset == "offset":
+                                offset = float(time_offset)
+                            elif mode_offset == "longer":
+                                if loc_offset >= loc_mpe:
+                                    offset = float(time_offset)
+                                else:
+                                    offset = float(time_mpe)
+
+                            else:
+                                if loc_offset <= loc_mpe:
+                                    offset = float(time_offset)
+                                else:
+                                    offset = float(time_mpe)
+
+                        # (3.5) Handle velocity
+                        if mode_velocity != "ignore_zero":
+                            # NOTE Check
+                            midr_note = MidiTransforms.from_coords(time_onset,
+                                                                   offset,
+                                                                   x, y, z,
+                                                                   velocity,
+                                                                   repr_type=repr_type)
+                            midr_notes.append(midr_note)
+                        else:
+                            if velocity > 0:
+                                midr_note = MidiTransforms.from_coords(time_onset,
+                                                                       offset,
+                                                                       x, y, z,
+                                                                       velocity,
+                                                                       repr_type=repr_type)
+                                midr_notes.append(midr_note)
+
+                        # (3.6) Trim overlapping notes
+                        if  (len(midr_notes) > 1) and \
+                            (midr_notes[len(midr_notes)-1].pitch == midr_notes[len(midr_notes)-2].pitch) and \
+                            (midr_notes[len(midr_notes)-1].onset < midr_notes[len(midr_notes)-2].offset):
+                                midr_notes[len(midr_notes)-2].offset = midr_notes[len(midr_notes)-1].onset
+                            
+        midr_notes = sorted(sorted(midr_notes, key=lambda x: x.pitch), key=lambda x: x.onset)
+        return midr_notes
+
+    def midr2notes(self, midr_notes):
+        notes = []
+        for midr_note in midr_notes:
+            note = midr_note.to_midi_note()
+            notes.append(note)
+        return notes
+    
+    def notes2midi(self, notes, midi_path):
+        midi = pretty_midi.PrettyMIDI()
+        instrument = pretty_midi.Instrument(program=0)
+        for note in notes:
+            instrument.notes.append(pretty_midi.Note(velocity=note.velocity,
+                                                     pitch=note.pitch,
+                                                     start=note.onset,
+                                                     end=note.offset))
+        midi.instruments.append(instrument)
+        midi.write(str(midi_path))
+        return
+
+    def labels_to_midi(self, osnet_label, offset_label, mpe_label, velocity_label, midi_path):
+        """
+            Input   : Note label matrices 4 x (L, (X, Y, Z))
+            Output  : Midi file path
+        """
+        midr_notes = self.label2midr(osnet_label, offset_label, mpe_label, velocity_label)
+        notes = self.midr2notes(midr_notes)
+        self.notes2midi(notes, midi_path)
+        return
+
+    # UTILS
+
+    def plot_cntr(self, label):
+        """
+            Helper function for plotting a center after projecting the z axis to 2D (L x z)
         """
         nframe = label.shape[0]
         grid = np.zeros((nframe, 88))
@@ -315,11 +594,28 @@ class MidiProcessor():
             z           = int(label[i, 2] + 0.5)
             velocity    = label[i, 3]
             diameter    = label[i, 4]
-            grid[i, z]  = diameter
+            grid[i, z]  = diameter * velocity
 
         plt.imshow(grid.T, aspect='auto', origin='lower', cmap='magma')
         plt.show()
 
+
+    def plot_label(self, label):
+        """
+            Helper function for plotting a label after projecting the z axis to 2D (L x z)
+        """
+        nframe      = label.shape[0]
+        num_notes   = label.shape[3]
+        grid = np.zeros((nframe, num_notes))
+
+        for i in range(nframe):
+            for z in range(num_notes):
+                velocity    = label[i, 0, 0, z]
+                if velocity > 0:
+                    grid[i, z]  = velocity
+
+        plt.imshow(grid.T, aspect='auto', origin='lower', cmap='magma')
+        plt.show()
 
 
 def pedal2list(ccSeq, ccNum, onThreshold=64, endT = None):
@@ -371,7 +667,6 @@ def pedal2list(ccSeq, ccNum, onThreshold=64, endT = None):
 
     return seqEvent
 
-
 def resolve_overlapping(note_list):
     """
     Resolve overlapping note segments by slicing off the offset of overlapping notes
@@ -409,7 +704,6 @@ def resolve_overlapping(note_list):
         warnings.warn("There are error notes in given midi")
 
     return ex_notes
-
 
 def extend_pedal(note_events, pedal_events):
     """
@@ -451,7 +745,6 @@ def extend_pedal(note_events, pedal_events):
 
     return ex_notes
 
-
 def validate_notes(notes):
     """
     Validate that note events don't overlap and no notes offset before they onset
@@ -486,7 +779,6 @@ def get_centroid(notes):
     weight      = np.average(weights, axis=0)
     return np.hstack([centroid, weight])
 
-
 def get_diameter(notes):
     if not notes:
         return -1
@@ -501,12 +793,11 @@ def get_diameter(notes):
     return diameter
 
 
+
 if __name__=="__main__":
-    midi_processor = MidiProcessor()
-    midi_path = Path("./MIDR/test_files/test_midi.mid")
-    events = midi_processor.midi2events(midi_path)
-    midr_notes = midi_processor.events2midr(events, "sna")
-    mpe_label, onset_label, offset_label, velocity_label = midi_processor.midr2frame(midr_notes)
-    mpe_label = midi_processor.frame2center(mpe_label)
-    mpe_chunks = midi_processor.label2chunks(mpe_label)
-    midi_processor.plot_label(mpe_label)
+    mp = MidiProcessor()
+    midi_path       = Path("./MIDR/test_files/test_midi.mid")
+    midi_path_out   = Path("./MIDR/test_files/test_midi_out.mid")
+
+    osnet_label, offset_label, mpe_label, velocity_label = mp.midi_to_labels(midi_path)
+    mp.labels_to_midi(osnet_label, offset_label, mpe_label, velocity_label, midi_path_out)
