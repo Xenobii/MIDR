@@ -226,9 +226,20 @@ class MidiTransforms():
 
         note = MidiNote(onset, offset, pitch, velocity)
         return cls(note, repr_type)
-
-
-
-if __name__ == "__main__":
-    sna_note = TorusNote(0, 1, 62, 64, 0)
-    sna_note.visualize()
+    
+    @classmethod
+    def get_repr_space(cls, repr_type="standard"):
+        if repr_type == "standard":
+            X   = 1
+            Y   = 1
+            Z   = 88
+        
+        elif repr_type == "sna":
+            X   = 1
+            Y   = 1
+            Z   = 88
+        
+        else: 
+            raise ValueError(f"Invalid representation type")
+        
+        return X, Y, Z

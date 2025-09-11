@@ -4,11 +4,9 @@
     Preprocessing algorithm is based on this: https://github.com/sony/hFT-Transformer
 """
 
-import torchaudio
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import librosa
 import pretty_midi
 import json
 import warnings
@@ -18,28 +16,13 @@ from pathlib import Path
 from collections import defaultdict
 import torch.nn.functional as F
 
-from MIDR.data.spec_types import SpecTransforms
 from MIDR.data.note_types import MidiTransforms, MidiNote
 
 
 class MidiProcessor():
-    def __init__(self):
-        # Add config here for now
-        self.config = {
-            "feature": {
-                "sr"            : 16000,
-                "fft_bins"      : 2048,
-                "window_length" : 2048,
-                "hop_sample"    : 256,
-                "mel_bins"      : 256,
-                "pad_mode"      : "constant"
-            },
-            "input" : {
-                "margin_left"   : 32,
-                "margin_right"  : 32,
-                "num_frame"     : 128
-            }
-        }
+    def __init__(self, config, repr_type="standard"):
+        self.config     = config
+        self.repr_type  = repr_type
     
     # PREPROCESSING
     
@@ -68,20 +51,20 @@ class MidiProcessor():
 
         # (3.1) If extendSustainPedal, extend notes to its duration
         if extendSustainPedal:
-            ccSeq = pedal2list(i.control_changes, ccNum = 64, onThreshold = 64, endT = endT)
+            ccSeq = self.pedal2list(i.control_changes, ccNum = 64, onThreshold = 64, endT = endT)
             ccSeq.sort(key = lambda x: (x.onset, x.offset, x.pitch))
             note_events.sort(key = lambda x: (x.onset, x.offset, x.pitch))
-            note_events = extend_pedal(note_events, ccSeq)
+            note_events = self.extend_pedal(note_events, ccSeq)
         
         # (4) Resolve overlapping and validate
-        note_events = resolve_overlapping(note_events)
-        validate_notes(note_events)
+        note_events = self.resolve_overlapping(note_events)
+        self.validate_notes(note_events)
 
         eventSeqs = [note_events]
         
         # (5) Get pedal events
         for ccNum in supportedCC:
-            ccSeq = pedal2list(i.control_changes, ccNum, onThreshold = 64, endT = endT)
+            ccSeq = self.pedal2list(i.control_changes, ccNum, onThreshold = 64, endT = endT)
             ccSeq.sort(key = lambda x: (x.onset, x.offset, x.pitch))
             eventSeqs.append(ccSeq)
 
@@ -93,7 +76,7 @@ class MidiProcessor():
 
         return events
     
-    def evnt2midr(self, events, repr_type="standard", delta=0):
+    def evnt2midr(self, events, delta=0):
         """
             Input   : Note event list (list of note events)
             Output  : MIDR list (list of midr events)
@@ -105,13 +88,13 @@ class MidiProcessor():
         # (2) Iterate through notes and convert to midr
         midr_notes = []
         for midi_note in midi_notes:
-            midr_note = MidiTransforms(midi_note, repr_type=repr_type, delta=delta)
+            midr_note = MidiTransforms(midi_note, repr_type=self.repr_type, delta=delta)
             midr_notes.append(midr_note.to_dict())
         
         # (3) Parse events
         midrep = {"midrep_notes": midr_notes,
                   "sustain"     : sustain,
-                  "type"        : repr_type}
+                  "type"        : self.repr_type}
         
         return midrep
     
@@ -239,10 +222,12 @@ class MidiProcessor():
     def seq2note(self, seq, int_velocity=False):
         """
             Input   : Note Array(L, Array([x, y, z, vel]))
-            Output  : Note label matrix (L, (X, Y, Z))
+            Output  : Note label matrix (L, X, Y, Z)
         """
         nframe  = len(seq)
-        label   = np.zeros((nframe, 1, 1, 88), dtype=np.int8) # Temp logic
+        X, Y, Z = MidiTransforms.get_repr_space(self.repr_type)
+        
+        label   = np.zeros((nframe, X, Y, Z), dtype=np.int8) # Temp logic
 
         for i in range(0, nframe):
             for note in seq[i]:
@@ -265,8 +250,8 @@ class MidiProcessor():
         center = np.zeros((nframe, 5), dtype=np.float32)
 
         for i in range(0, nframe):
-            center[i, :4]    = get_centroid(seq[i])
-            center[i, 4]     = get_diameter(seq[i])
+            center[i, :4]    = self.get_centroid(seq[i])
+            center[i, 4]     = self.get_diameter(seq[i])
         return center
 
     def lbl2chunks(self, label):
@@ -355,8 +340,6 @@ class MidiProcessor():
         hop_sec     = float(hop_sample / sr)
 
         L, X, Y, Z = onset_label.shape
-
-        repr_type = "standard" # Temp
 
         midr_notes = []
 
@@ -532,7 +515,7 @@ class MidiProcessor():
                                                                    offset,
                                                                    x, y, z,
                                                                    velocity,
-                                                                   repr_type=repr_type)
+                                                                   repr_type=self.repr_type)
                             midr_notes.append(midr_note)
                         else:
                             if velocity > 0:
@@ -540,7 +523,7 @@ class MidiProcessor():
                                                                        offset,
                                                                        x, y, z,
                                                                        velocity,
-                                                                       repr_type=repr_type)
+                                                                       repr_type=self.repr_type)
                                 midr_notes.append(midr_note)
 
                         # (3.6) Trim overlapping notes
@@ -583,6 +566,34 @@ class MidiProcessor():
 
     # UTILS
 
+    def get_centroid(self, notes):
+        if not notes:
+            return 0
+        
+        notes   = np.array(notes)
+        coords  = notes[:, :3]
+        weights = notes[:, 3]
+
+        if (all(weights) == 0):
+            return 0
+        
+        centroid    = np.average(coords, axis=0, weights=weights)
+        weight      = np.average(weights, axis=0)
+        return np.hstack([centroid, weight])
+
+    def get_diameter(self, notes):
+        if not notes:
+            return -1
+        
+        notes = np.array(notes)
+        coords = notes[:, :3]
+
+        diffs = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
+        dists = np.linalg.norm(diffs, axis=-1)
+
+        diameter = np.max(dists)
+        return diameter
+
     def plot_cntr(self, label):
         """
             Helper function for plotting a center after projecting the z axis to 2D (L x z)
@@ -598,7 +609,6 @@ class MidiProcessor():
 
         plt.imshow(grid.T, aspect='auto', origin='lower', cmap='magma')
         plt.show()
-
 
     def plot_label(self, label):
         """
@@ -617,187 +627,163 @@ class MidiProcessor():
         plt.imshow(grid.T, aspect='auto', origin='lower', cmap='magma')
         plt.show()
 
+    def pedal2list(self, ccSeq, ccNum, onThreshold=64, endT = None):
+        """
+        Get pedal note events
 
-def pedal2list(ccSeq, ccNum, onThreshold=64, endT = None):
-    """
-    Get pedal note events
+        Args:
+            ccSeq (prettyMidi.control_changes)
+            ccNum (int): Pedal number
+            onThreshold (int, optional). Defaults to 64.
+            endT (float32, optional): Final offset in the sequence. Defaults to None.
 
-    Args:
-        ccSeq (prettyMidi.control_changes)
-        ccNum (int): Pedal number
-        onThreshold (int, optional). Defaults to 64.
-        endT (float32, optional): Final offset in the sequence. Defaults to None.
+        Returns:
+            List(StdNote objects): The list of pedal events as negative note events
+        """
+        currentStatus = False
+        runningStatus = False
 
-    Returns:
-        List(StdNote objects): The list of pedal events as negative note events
-    """
-    currentStatus = False
-    runningStatus = False
+        currentEvent = None
+        seqEvent = []
 
-    currentEvent = None
-    seqEvent = []
+        time = 0
 
-    time = 0
+        for c in ccSeq:
+            # Get status (on/off)
+            if c.number == ccNum:
+                time = c.time
+                if c.value>=onThreshold:
+                    currentStatus = True
+                else:
+                    currentStatus = False
+                    
+            # Find onset and offset position
+            if runningStatus != currentStatus:
+                if currentStatus == True:
+                    # Use negative number as pitch for control change event
+                    currentEvent = MidiNote(time, None, -ccNum, 127)
+                else:
+                    currentEvent.offset = time
+                    seqEvent.append(currentEvent)
 
-    for c in ccSeq:
-        # Get status (on/off)
-        if c.number == ccNum:
-            time = c.time
-            if c.value>=onThreshold:
-                currentStatus = True
-            else:
-                currentStatus = False
-                
-        # Find onset and offset position
-        if runningStatus != currentStatus:
-            if currentStatus == True:
-                # Use negative number as pitch for control change event
-                currentEvent = MidiNote(time, None, -ccNum, 127)
-            else:
-                currentEvent.offset = time
+            runningStatus = currentStatus
+
+        # Process the case where state is not closed off at the offset
+        if runningStatus and endT is not None:
+            currentEvent.offset = max(endT, time)
+            if currentEvent.offset > currentEvent.onset:
                 seqEvent.append(currentEvent)
 
-        runningStatus = currentStatus
+        return seqEvent
 
-    # Process the case where state is not closed off at the offset
-    if runningStatus and endT is not None:
-        currentEvent.offset = max(endT, time)
-        if currentEvent.offset > currentEvent.onset:
-            seqEvent.append(currentEvent)
+    def resolve_overlapping(self, note_list):
+        """
+        Resolve overlapping note segments by slicing off the offset of overlapping notes
 
-    return seqEvent
+        Args:
+            note_list (StdNote objects)
 
-def resolve_overlapping(note_list):
-    """
-    Resolve overlapping note segments by slicing off the offset of overlapping notes
-
-    Args:
-        note_list (StdNote objects)
-
-    Returns:
-        List(StdNote objects): The corrected list of notes 
-    """
-    
-    buffer_dict  = {}
-    ex_notes = []
-    idx = 0
-
-    # For all overlapping notes of the same pitch, slice the offset of the first note
-    for note in note_list:
-        pitch = note.pitch
-
-        if pitch in buffer_dict.keys():
-            _idx = buffer_dict[pitch]
-            if ex_notes[_idx].offset > note.onset:
-                ex_notes[_idx].offset = note.onset
-
-        buffer_dict[pitch] = idx
-        idx += 1
-
-        ex_notes.append(note)
-
-    ex_notes.sort(key = lambda x: (x.onset, x.offset, x.pitch))
-
-    # Detect errors
-    error_notes = [n for n in ex_notes if not n.onset<n.offset]
-    if len(error_notes) > 0:
-        warnings.warn("There are error notes in given midi")
-
-    return ex_notes
-
-def extend_pedal(note_events, pedal_events):
-    """
-    Extend notes if sustain pedal is on 
-
-    Args:
-        note_events  (List(StdNote Object))
-        pedal_events (List(StdNote Object))
-
-    Returns:
-        List(StdNote Object): List of adjusted notes 
-    """
-    ex_notes = []
-
-    idx = 0
-
-    buffer_dict = {}
-    nIn = len(note_events)
-
-    for note in note_events:
-        pitch = note.pitch
-        if pitch in buffer_dict.keys():
-            _idx = buffer_dict[pitch]
-            if ex_notes[_idx].offset > note.onset:
-                ex_notes[_idx].offset = note.onset
-
-        for pedal in pedal_events:
-            if note.offset < pedal.offset and note.offset>pedal.onset:
-                note.offset = pedal.offset
+        Returns:
+            List(StdNote objects): The corrected list of notes 
+        """
         
-        buffer_dict[note] = idx
-        idx += 1
-        ex_notes.append(note)
+        buffer_dict  = {}
+        ex_notes = []
+        idx = 0
 
-    ex_notes.sort(key = lambda x: (x.onset, x.offset, x.pitch))
+        # For all overlapping notes of the same pitch, slice the offset of the first note
+        for note in note_list:
+            pitch = note.pitch
 
-    nOut = len(ex_notes)
-    assert(nOut == nIn)
+            if pitch in buffer_dict.keys():
+                _idx = buffer_dict[pitch]
+                if ex_notes[_idx].offset > note.onset:
+                    ex_notes[_idx].offset = note.onset
 
-    return ex_notes
+            buffer_dict[pitch] = idx
+            idx += 1
 
-def validate_notes(notes):
-    """
-    Validate that note events don't overlap and no notes offset before they onset
+            ex_notes.append(note)
 
-    Args:
-        notes (List(StdNote object)): A list of StdNote objects
-    """
-    pitches = defaultdict(list)
-    for n in notes:
-        if len(pitches[n.pitch])>0:
-            # Make sure no notes overlap
-            nPrev = pitches[n.pitch][-1]
-            assert n.onset >= nPrev.offset, str(n) + str(nPrev)
-        # Make sure no notes offset before they onset
-        assert n.onset < n.offset, n
+        ex_notes.sort(key = lambda x: (x.onset, x.offset, x.pitch))
 
-        pitches[n.pitch].append(n)
+        # Detect errors
+        error_notes = [n for n in ex_notes if not n.onset<n.offset]
+        if len(error_notes) > 0:
+            warnings.warn("There are error notes in given midi")
 
+        return ex_notes
 
-def get_centroid(notes):
-    if not notes:
-        return 0
-    
-    notes   = np.array(notes)
-    coords  = notes[:, :3]
-    weights = notes[:, 3]
+    def extend_pedal(self, note_events, pedal_events):
+        """
+        Extend notes if sustain pedal is on 
 
-    if (all(weights) == 0):
-        return 0
-    
-    centroid    = np.average(coords, axis=0, weights=weights)
-    weight      = np.average(weights, axis=0)
-    return np.hstack([centroid, weight])
+        Args:
+            note_events  (List(StdNote Object))
+            pedal_events (List(StdNote Object))
 
-def get_diameter(notes):
-    if not notes:
-        return -1
-    
-    notes = np.array(notes)
-    coords = notes[:, :3]
+        Returns:
+            List(StdNote Object): List of adjusted notes 
+        """
+        ex_notes = []
 
-    diffs = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
-    dists = np.linalg.norm(diffs, axis=-1)
+        idx = 0
 
-    diameter = np.max(dists)
-    return diameter
+        buffer_dict = {}
+        nIn = len(note_events)
 
+        for note in note_events:
+            pitch = note.pitch
+            if pitch in buffer_dict.keys():
+                _idx = buffer_dict[pitch]
+                if ex_notes[_idx].offset > note.onset:
+                    ex_notes[_idx].offset = note.onset
+
+            for pedal in pedal_events:
+                if note.offset < pedal.offset and note.offset>pedal.onset:
+                    note.offset = pedal.offset
+            
+            buffer_dict[note] = idx
+            idx += 1
+            ex_notes.append(note)
+
+        ex_notes.sort(key = lambda x: (x.onset, x.offset, x.pitch))
+
+        nOut = len(ex_notes)
+        assert(nOut == nIn)
+
+        return ex_notes
+
+    def validate_notes(self, notes):
+        """
+        Validate that note events don't overlap and no notes offset before they onset
+
+        Args:
+            notes (List(StdNote object)): A list of StdNote objects
+        """
+        pitches = defaultdict(list)
+        for n in notes:
+            if len(pitches[n.pitch])>0:
+                # Make sure no notes overlap
+                nPrev = pitches[n.pitch][-1]
+                assert n.onset >= nPrev.offset, str(n) + str(nPrev)
+            # Make sure no notes offset before they onset
+            assert n.onset < n.offset, n
+
+            pitches[n.pitch].append(n)
 
 
 if __name__=="__main__":
-    mp = MidiProcessor()
+    # Load config midi
+    midi_config_path = str(Path("MIDR/data/midi_config.json"))
+    with open(midi_config_path, 'r', encoding='utf-8') as f:
+        midi_config = json.load(f)
+
+    # Load processor
+    mp = MidiProcessor(midi_config)
     midi_path       = Path("./MIDR/test_files/test_midi.mid")
     midi_path_out   = Path("./MIDR/test_files/test_midi_out.mid")
 
-    osnet_label, offset_label, mpe_label, velocity_label = mp.midi_to_labels(midi_path)
-    mp.labels_to_midi(osnet_label, offset_label, mpe_label, velocity_label, midi_path_out)
+    onset_label, offset_label, mpe_label, velocity_label = mp.midi_to_labels(midi_path)
+    onset_chunks, offset_chunks, mpe_chunks, velocity_chunks = mp.lbl2chunks(onset_label), mp.lbl2chunks(offset_label), mp.lbl2chunks(mpe_label), mp.lbl2chunks(velocity_label)
+    mp.labels_to_midi(onset_label, offset_label, mpe_label, velocity_label, midi_path_out)
