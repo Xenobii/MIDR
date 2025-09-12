@@ -9,15 +9,13 @@ class MIDINet_Std(nn.Module):
         super().__init__()
 
         # CONFIG
-        self.device     = device
-
         self.in_dim         = 5
         self.hidden_dim     = 10
         self.out_channels   = 1
 
         # LAYERS
         self.fc = nn.Sequential(
-            nn.Linear(self.in_dim, self.hidden_dim * 2 * 2 * 2)
+            nn.Linear(self.in_dim, self.hidden_dim * 1 * 1 * 22)
         )
     
         self.deconv = nn.Sequential(
@@ -25,7 +23,9 @@ class MIDINet_Std(nn.Module):
             nn.ReLU(),
             nn.ConvTranspose3d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1),
             nn.ReLU(),
-            nn.Conv3d(16, self.out_channels, kernel_size = 3, padding=1)
+            nn.Conv3d(16, self.out_channels, kernel_size = 3, padding=1),
+            nn.AdaptiveAvgPool3d((1,1,88)),
+            nn.Sigmoid()
         )
 
     def count_params(self):
@@ -37,7 +37,7 @@ class MIDINet_Std(nn.Module):
         x = self.fc(x)
 
         # Transpose to 3d 
-        x = x.view(-1, self.hidden_dim, 2, 2, 2)
+        x = x.view(-1, self.hidden_dim, 1, 1, 22)
 
         # 3D deconv
         x = self.deconv(x)

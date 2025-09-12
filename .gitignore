@@ -1,6 +1,7 @@
+# Project specifics
 /test.py
 /MIDR/test_files
-/MIDR/corpus/__pycache__/
-/MIDR/data/__pycache__/
-/MIDR/models/__pycache__/
 /MIDR/backup
+
+# Cache
+__pycache__/

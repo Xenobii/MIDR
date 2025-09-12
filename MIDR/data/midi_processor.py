@@ -780,10 +780,12 @@ if __name__=="__main__":
         midi_config = json.load(f)
 
     # Load processor
-    mp = MidiProcessor(midi_config)
+    mp              = MidiProcessor(midi_config)
     midi_path       = Path("./MIDR/test_files/test_midi.mid")
     midi_path_out   = Path("./MIDR/test_files/test_midi_out.mid")
 
     onset_label, offset_label, mpe_label, velocity_label = mp.midi_to_labels(midi_path)
+    onset_cntr, offset_cntr, mpe_cntr, velocity_centr = mp.midi_to_centr(midi_path)
+    
     onset_chunks, offset_chunks, mpe_chunks, velocity_chunks = mp.lbl2chunks(onset_label), mp.lbl2chunks(offset_label), mp.lbl2chunks(mpe_label), mp.lbl2chunks(velocity_label)
     mp.labels_to_midi(onset_label, offset_label, mpe_label, velocity_label, midi_path_out)

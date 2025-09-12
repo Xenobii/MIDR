@@ -1,4 +1,5 @@
 numpy
+tqdm
 librosa
 matplotlib
 torch
