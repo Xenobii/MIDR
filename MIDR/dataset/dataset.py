@@ -54,6 +54,10 @@ class MIDI_Dataset(Dataset):
             mpe_label   = mpe_label.astype(np.float32) / 127.0
             mpe_cntr    = mpe_cntr.astype(np.float32)
 
+            # # (3.2) Temp - Convert to chunk
+            # mpe_label   = mp.lbl2chunks(mpe_label)[5].numpy()
+            # mpe_cntr    = mp.ctr2chunks(mpe_cntr)[5].numpy()
+
             # (4) Stack labels across axis 0
             # FOR NOW DO ONLY MPE SO NO STACKING
 
@@ -86,4 +90,3 @@ if __name__=="__main__":
     output_path = str(Path("./MIDR/test_files/test.pkl"))
     
     MIDI_Dataset.create_dataset(midi_folder, output_path)
-    MIDI_DataLoader.create_dataloader(output_path)

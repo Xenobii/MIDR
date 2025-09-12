@@ -272,18 +272,53 @@ class MidiProcessor():
         num_frame_pad   = num_chunks * num_frame_chunk - num_frame_label
 
         label           = torch.from_numpy(label)        # Do this more cleanly elsewhere
-        label_padded    = F.pad(label, (0, 0, 0, num_frame_pad), mode="constant", value = 0)
+        label_padded    = F.pad(label, (0, 0, 0, 0, 0, 0, 0, num_frame_pad), mode="constant", value = 0)
 
         # (2) Pad edges
-        margin_left     = self.config["input"]["margin_left"]   # 32
-        margin_right    = self.config["input"]["margin_right"]  # 32
+        margin_left     = self.config["input"]["margin_b"]  # 32
+        margin_right    = self.config["input"]["margin_f"]  # 32
         mode            = self.config["feature"]["pad_mode"]    # constant
-        label_padded    = F.pad(label_padded, (0, 0, margin_left, margin_right), mode=mode, value=0)
+        label_padded    = F.pad(label_padded, (0, 0, 0, 0, 0, 0, margin_left, margin_right), mode=mode, value=0)
 
         # (3) Split into chunks (prepaded)
         chunks = []
         for n in range(0, num_chunks):
             chunk = label_padded[n*num_frame_chunk:
+                                 margin_left + n*num_frame_chunk + num_frame_chunk + margin_right,
+                                 :]
+            chunks.append(chunk)
+
+        return chunks
+    
+    def ctr2chunks(self, center):
+        """
+            Input   : Label matrix (L, ?)
+            Output  : Array of padded chunks (K x ((N + 2M), ?))
+
+            L:  Total time frames
+            K:  Number of chunks
+            N:  Number of frames per chunk
+            M:  Pad margin
+            ?:  Input can be [x, y, z, vel, diam] or [x, y, z, vel]
+        """
+        # (1) Pad end to allow smooth splitting into chunks
+        num_frame_label = center.shape[0]
+        num_frame_chunk = self.config["input"]["num_frame"] # 128
+        num_chunks      = math.ceil(num_frame_label / num_frame_chunk)
+        num_frame_pad   = num_chunks * num_frame_chunk - num_frame_label
+
+        center          = torch.from_numpy(center)        # Do this more cleanly elsewhere
+        center_padded    = F.pad(center, (0, 0, 0, num_frame_pad), mode="constant", value = 0)
+        # (2) Pad edges
+        margin_left     = self.config["input"]["margin_b"]  # 32
+        margin_right    = self.config["input"]["margin_f"]  # 32
+        mode            = self.config["feature"]["pad_mode"]    # constant
+        center_padded    = F.pad(center_padded, (0, 0, margin_left, margin_right), mode=mode, value=0)
+
+        # (3) Split into chunks (prepaded)
+        chunks = []
+        for n in range(0, num_chunks):
+            chunk = center_padded[n*num_frame_chunk:
                                  margin_left + n*num_frame_chunk + num_frame_chunk + margin_right,
                                  :]
             chunks.append(chunk)
@@ -328,7 +363,7 @@ class MidiProcessor():
 
     def label2midr(self,
                   onset_label, offset_label, mpe_label, velocity_label,
-                  onset_thresh=0.5, offset_thresh=0.5, mpe_thresh=0.5,
+                  onset_thresh=0.1, offset_thresh=0.1, mpe_thresh=0.1,
                   mode_velocity="ignore_zero", mode_offset="shorter"):
         """ 
             Input   : Note label matrices 4 x (L, X, Y, Z)
@@ -343,20 +378,21 @@ class MidiProcessor():
 
         midr_notes = []
 
+        onset_label_mask = onset_label >= onset_thresh
         # THIS IS PRETTY SCUFFED AND UNOPTIMIZED, MAYBE REWORK LATER
         # (2) Iterate through every coordinate and check for local maxima
         for z in range(Z):
             # Move to next iteration if no element of an axis is above threshold
             # through the whole piece
-            if not (onset_label[:, :, :, z] > onset_thresh).any():
+            if not onset_label_mask[:, :, :, z].any():
                 continue
 
             for y in range(Y):
-                if not (onset_label[:, :, y, z] > onset_thresh).any():
+                if not onset_label_mask[:, :, y, z].any():
                     continue
 
                 for x in range(X):
-                    if not (onset_label[:, x, y, z] > onset_thresh).any():
+                    if not onset_label_mask[:, x, y, z].any():
                         continue
 
                     # (2.1) Onset detection

@@ -6,23 +6,27 @@ import torch.nn.functional as F
 
 from tqdm import tqdm
 from pathlib import Path
-from MIDR.models.midi_model import MIDINet_Std
+from MIDR.models.midi_model import MIDINet_Std_S, MIDINet_Std_M
 from MIDR.dataset.dataset import MIDI_DataLoader, MIDI_Dataset
 
 
 def midi_model_train(repr_type):
-    device = 'cpu' # Temp
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device == "cpu":
+        print(f"Model is running on {device}!")
+        breakpoint()
 
     # (2) Config model
     print("-- Model Settings -- ")
     print("-- repr_type    : " + str(repr_type))
     
     if repr_type == "standard":
-        model = MIDINet_Std()
+        model = MIDINet_Std_M()
     else: 
         raise ValueError(f"Invalid representation type {repr_type}")
     
     model.to(device)
+    model_path = str(Path("./MIDR/test_files/test_model.pth"))
 
     # (2.1) Print parameters
     params = model.count_params()
@@ -33,16 +37,12 @@ def midi_model_train(repr_type):
     print("-- ")
 
     batch_size  = 10
-    epochs      = 10
+    epochs      = 50
     lr          = 0.001
     
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.BCELoss()
-    
-    performance = {
-        'loss': [],
-        'current_epoch': []
-    }
+    optimizer   = optim.Adam(model.parameters(), lr=lr)
+    pos_weight  = torch.tensor([10.0]).to(device)
+    criterion   = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # (4) Load dataset
     print("-- Loading dataset --")
@@ -51,6 +51,7 @@ def midi_model_train(repr_type):
     dataloader_train = MIDI_DataLoader.create_dataloader(pkl_path, batch_size)
 
     # (5) Train
+    print("-- Training Start --")
     for epoch in range(epochs):
         model.train()
         
@@ -77,15 +78,15 @@ def midi_model_train(repr_type):
 
                         # Forward pass
                         pred = model(center.unsqueeze(0))
-                        pred = pred.view(-1, 88)
-                        loss = criterion(pred, label.view(-1, 88))
+                        pred = pred.squeeze((0, 1))
+                        loss = criterion(pred, label)
 
                         # Accumulate
                         batch_loss  += loss
                         frame_count += 1
 
-                        # Update progress bar
-                        prog_bar.update(1)
+                    # Update progress bar
+                    prog_bar.update(1)
                 
             
             # Normalize
@@ -100,6 +101,12 @@ def midi_model_train(repr_type):
 
         avg_loss = total_loss / total_frames
         print(f"Epoch {epoch+1}/{epochs} | Avg Loss per frame {avg_loss: .3f}")
+
+    # (6) Save model
+    torch.save(model.state_dict(), model_path)
+    
+    # (7) Done!
+    print(f"-- Finished training! --")
 
 
 if __name__=="__main__":
