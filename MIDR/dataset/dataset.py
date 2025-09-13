@@ -22,11 +22,17 @@ class MIDI_Dataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        centers = torch.tensor(item["centers"], dtype=torch.float32)
-        labels  = torch.tensor(item["labels"], dtype=torch.float32)
-        file    = item["file"]
+        centers         = torch.tensor(item["centers"], dtype=torch.float32)
+        onset_label     = torch.tensor(item["onset_label"], dtype=torch.float32)
+        offset_label    = torch.tensor(item["offset_label"], dtype=torch.float32)
+        mpe_label       = torch.tensor(item["mpe_label"], dtype=torch.float32)
+        velocity_label  = torch.tensor(item["velocity_label"], dtype=torch.float32)
+        file            = item["file"]
         return {"centers"   : centers,
-                "labels"    : labels,
+                "onset_label"     : onset_label,
+                "offset_label"    : offset_label,
+                "mpe_label"       : mpe_label,
+                "velocity_label"  : velocity_label,
                 "file"      : file}
 
     @classmethod
@@ -51,21 +57,27 @@ class MIDI_Dataset(Dataset):
             onset_cntr, offset_cntr, mpe_cntr, velocity_centr = mp.midi_to_centr(midi_path)
 
             # (3.1) Normalize
-            mpe_label   = mpe_label.astype(np.float32) / 127.0
-            mpe_cntr    = mpe_cntr.astype(np.float32)
+            mpe_cntr        = mpe_cntr.astype(np.float32)
+            onset_label     = onset_label.astype(np.float32) / 127.0
+            offset_label    = offset_label.astype(np.float32) / 127.0
+            mpe_label       = mpe_label.astype(np.float32) / 127.0
+            velocity_label  = velocity_label.astype(np.float32) / 127.0
 
-            # # (3.2) Temp - Convert to chunk
-            # mpe_label   = mp.lbl2chunks(mpe_label)[5].numpy()
-            # mpe_cntr    = mp.ctr2chunks(mpe_cntr)[5].numpy()
-
-            # (4) Stack labels across axis 0
-            # FOR NOW DO ONLY MPE SO NO STACKING
+            # (4) Split to chunks
+            # mpe_cntr        = mp.ctr2chunks(mpe_cntr)
+            # onset_label     = mp.lbl2chunks(onset_label)
+            # offset_label    = mp.lbl2chunks(offset_label)
+            # mpe_label       = mp.lbl2chunks(mpe_label)
+            # velocity_label  = mp.lbl2chunks(velocity_label)
 
             # (5) Add to dataset
             dataset.append({
-                "file"      : midi_file,
-                "centers"   : mpe_cntr,
-                "labels"    : mpe_label
+                "file"              : midi_file,
+                "centers"           : mpe_cntr,
+                "onset_label"       : onset_label,
+                "offset_label"      : offset_label,
+                "mpe_label"         : mpe_label,
+                "velocity_label"    : velocity_label
             })
 
         # (6) Save dataset as pkl

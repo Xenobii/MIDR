@@ -29,7 +29,7 @@ def inference(midi_path, midi_path_out):
     # offset_cntr     = mp.ctr2chunks(offset_cntr)[5].numpy()
     # mpe_cntr        = mp.ctr2chunks(mpe_cntr)[5].numpy()
     # velocity_cntr   = mp.ctr2chunks(velocity_cntr)[5].numpy()
-    
+
     onset_cntr      = torch.from_numpy(onset_cntr).to(device)
     offset_cntr     = torch.from_numpy(offset_cntr).to(device)
     mpe_cntr        = torch.from_numpy(mpe_cntr).to(device)
@@ -38,7 +38,7 @@ def inference(midi_path, midi_path_out):
     # (3) Load model
     model_path  = str(Path("./MIDR/test_files/test_model.pth"))
 
-    model = MIDINet_Std_M()
+    model = MIDINet_Std_S()
     model.load_state_dict(torch.load(model_path))
 
     model.eval()
@@ -48,10 +48,14 @@ def inference(midi_path, midi_path_out):
     # Since we do it frame-by-frame for now it's a mess
     print("Runnning inference...")
     with torch.no_grad():
-        onset       = model(onset_cntr).squeeze(1).cpu().numpy()
-        offset      = model(offset_cntr).squeeze(1).cpu().numpy()
-        mpe         = model(mpe_cntr).squeeze(1).cpu().numpy()
-        velocity    = model(velocity_cntr).squeeze(1).cpu().numpy()
+        onset, offset, mpe, velocity = model(mpe_cntr)
+
+    # Return to int8
+    onset       = onset.cpu().numpy()
+    offset      = offset.cpu().numpy()
+    mpe         = mpe.cpu().numpy()
+    # velocity    = velocity.cpu().numpy() * 127
+    velocity = mpe * 127
 
     # (5) Postprocessing
     print("Post-processing...")

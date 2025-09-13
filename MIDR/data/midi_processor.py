@@ -363,7 +363,7 @@ class MidiProcessor():
 
     def label2midr(self,
                   onset_label, offset_label, mpe_label, velocity_label,
-                  onset_thresh=0.1, offset_thresh=0.1, mpe_thresh=0.1,
+                  onset_thresh=0.3, offset_thresh=0.3, mpe_thresh=0.3,
                   mode_velocity="ignore_zero", mode_offset="shorter"):
         """ 
             Input   : Note label matrices 4 x (L, X, Y, Z)

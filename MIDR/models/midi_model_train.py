@@ -21,7 +21,7 @@ def midi_model_train(repr_type):
     print("-- repr_type    : " + str(repr_type))
     
     if repr_type == "standard":
-        model = MIDINet_Std_M()
+        model = MIDINet_Std_S()
     else: 
         raise ValueError(f"Invalid representation type {repr_type}")
     
@@ -37,12 +37,22 @@ def midi_model_train(repr_type):
     print("-- ")
 
     batch_size  = 10
-    epochs      = 50
+    epochs      = 400
     lr          = 0.001
     
-    optimizer   = optim.Adam(model.parameters(), lr=lr)
-    pos_weight  = torch.tensor([10.0]).to(device)
-    criterion   = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    criterion_onset     = nn.BCELoss()
+    criterion_offset    = nn.BCELoss()
+    criterion_mpe       = nn.BCELoss()
+    criterion_velocity  = nn.CrossEntropyLoss()
+    
+    pos_weight          = torch.tensor([100.0]).to(device)
+    pos_weight_onset    = torch.tensor([400.0]).to(device)
+    criterion_onset     = nn.BCEWithLogitsLoss(pos_weight=pos_weight_onset)
+    criterion_offset    = nn.BCEWithLogitsLoss(pos_weight=pos_weight_onset)
+    criterion_mpe       = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    criterion_velocity  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # (4) Load dataset
     print("-- Loading dataset --")
@@ -58,49 +68,62 @@ def midi_model_train(repr_type):
         total_loss      = 0.0
         total_frames    = 0
 
-        for idx, batch in enumerate(dataloader_train):
-            centers = batch["centers"].to(device)
-            labels  = batch["labels"].to(device)
+        pbar = tqdm(dataloader_train, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
 
-            B, L, *_ = centers.shape
+        for idx, batch in enumerate(pbar):
+            centers     = batch["centers"].to(device)
+            onset_label       = batch["onset_label"].to(device)
+            offset_label      = batch["offset_label"].to(device)
+            mpe_label         = batch["mpe_label"].to(device)
+            velocity_label    = batch["velocity_label"].to(device)
+
+            B, L = centers.shape[:2]
 
             optimizer.zero_grad()
             
-            batch_loss  = 0.0
-            frame_count = 0
+            # Flatten batch and frames
+            centers         = centers.view(B*L, *centers.shape[2:])
+            onset_label     = onset_label.view(B*L, *onset_label.shape[2:])
+            offset_label    = offset_label.view(B*L, *offset_label.shape[2:])
+            mpe_label       = mpe_label.view(B*L, *mpe_label.shape[2:])
+            velocity_label  = velocity_label.view(B*L, *velocity_label.shape[2:])
 
-            # Go frame by frame
-            with tqdm(total=B*L, desc=f"Epoch {epoch+1}/{epochs} [Batch {idx+1}]", leave=False) as prog_bar:
-                for b in range(B):
-                    for t in range(L):
-                        center  = centers[b, t]
-                        label   = labels[b, t]
+            # Temp test - bool mpe, cce velocity
+            mpe_label       = (mpe_label != 0).float()
 
-                        # Forward pass
-                        pred = model(center.unsqueeze(0))
-                        pred = pred.squeeze((0, 1))
-                        loss = criterion(pred, label)
+            # Forward
+            onset_pred, offset_pred, mpe_pred, velocity_pred = model(centers)
 
-                        # Accumulate
-                        batch_loss  += loss
-                        frame_count += 1
-
-                    # Update progress bar
-                    prog_bar.update(1)
-                
+            # Loss
+            loss_onset      = criterion_onset(onset_pred, onset_label)
+            loss_offset     = criterion_offset(offset_pred, offset_label)
+            loss_mpe        = criterion_mpe(mpe_pred, mpe_label)
+            loss_velocity   = criterion_velocity(velocity_pred, velocity_label)
+            loss = loss_onset + loss_offset + loss_mpe + loss_velocity
             
-            # Normalize
-            batch_loss = batch_loss / frame_count
-
-            # Backpropagation
-            batch_loss.backward()
+            # Backprop
+            loss.backward()
             optimizer.step()
 
-            total_loss      += batch_loss.item() * frame_count
-            total_frames    += frame_count
+            # Accumulate
+            batch_frames    = B * L
+            total_loss      += loss.item() * batch_frames
+            total_frames    += batch_frames
+
+            # pbar.set_postfix({"batch_loss": loss.item()})
 
         avg_loss = total_loss / total_frames
-        print(f"Epoch {epoch+1}/{epochs} | Avg Loss per frame {avg_loss: .3f}")
+        if (epoch+1) % 10  == 0:
+            print(f"Epoch {epoch+1}/{epochs} | Avg Loss per frame {avg_loss: .3f}")
+            if (epoch+1) % 50 == 0:
+                print(round(onset_pred.max().item(), 3),
+                      round(offset_pred.max().item(), 3),
+                      round(mpe_pred.max().item(), 3),
+                      round(velocity_pred.max().item(), 3))
+                print(round(onset_pred.min().item(), 3),
+                      round(offset_pred.min().item(), 3),
+                      round(mpe_pred.min().item(), 3),
+                      round(velocity_pred.min().item(), 3))
 
     # (6) Save model
     torch.save(model.state_dict(), model_path)
